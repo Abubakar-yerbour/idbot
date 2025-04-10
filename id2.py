@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 
-# Load bot token from environment variable
+# Read token from environment variable named TOKEN
 TOKEN = os.getenv("TOKEN")
 
 # Store file IDs with optional names
@@ -22,14 +22,13 @@ logging.basicConfig(
 # /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = (
-        "👋 *Welcome!*\n\n"
-        "📎 Send me any file (PDF, ZIP, video, etc.) and I’ll give you the `file_id`.\n"
-        "📥 You can also send me a file name or file ID to retrieve it later.\n\n"
-        "❓ *Need help?* Contact @Cyb37h4ck37"
+        "Send me any file (PDF, ZIP, video, etc.) and I’ll give you the `file_id`.\n"
+        "You can also send me a file name or file_id to retrieve it."
+        "For more information contact @Cyb37h4ck37"
     )
     await update.message.reply_text(escape_markdown(message, version=1), parse_mode="Markdown")
 
-# Handle media files
+# Handle documents, videos
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     document = message.document
@@ -42,7 +41,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_ids[file_id] = file_id
 
         await message.reply_text(
-            f"📄 *Document saved:*\n{escape_markdown(file_name, 1)}\n\n`{escape_markdown(file_id, 1)}`",
+            f"Document saved: {escape_markdown(file_name, 1)}\n`{escape_markdown(file_id, 1)}`",
             parse_mode="Markdown"
         )
 
@@ -53,13 +52,13 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_ids[file_id] = file_id
 
         await message.reply_text(
-            f"🎥 *Video saved:*\n{escape_markdown(file_name, 1)}\n\n`{escape_markdown(file_id, 1)}`",
+            f"Video saved: {escape_markdown(file_name, 1)}\n`{escape_markdown(file_id, 1)}`",
             parse_mode="Markdown"
         )
     else:
-        await message.reply_text("⚠️ Unsupported file type.")
+        await message.reply_text("Unsupported file type.")
 
-# Handle file ID or file name in text
+# Handle text: file_id or name
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().replace("\\_", "_")
     file_id = file_ids.get(text, text)
@@ -71,7 +70,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_video(file_id)
         except Exception:
             await update.message.reply_text(
-                "❌ I couldn’t find or access that file.\n"
+                "I couldn’t find or access that file.\n"
                 "Make sure the file ID is correct and the file still exists on Telegram."
             )
 
@@ -79,13 +78,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error("Exception while handling an update:", exc_info=context.error)
 
-# Run the bot
+# Setup and run
 if __name__ == "__main__":
+    if not TOKEN:
+        raise ValueError("TOKEN environment variable is not set.")
+
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
 
-    print("Bot is running...")
+    logging.info("Bot is running...")
     app.run_polling()
