@@ -8,7 +8,7 @@ from telegram.ext import (
 from telegram.helpers import escape_markdown
 
 # Read token from environment variable named TOKEN
-TOKEN = os.getenv("TOKEN")
+TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
 
 # Store file IDs with optional names
 file_ids = {}
