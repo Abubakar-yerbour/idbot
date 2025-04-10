@@ -1,103 +1,96 @@
-import logging
 from telegram import Update, InputFile
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    filters,
-    ContextTypes,
-    CommandHandler,
-)
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, CommandHandler, ContextTypes
+import logging
 
-# Bot token
+# Your bot token
 TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
 
-# Logging
+# Enable logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# /start command
+# Start command with friendly emojis
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to the Media Info Bot!\n\n"
-        "📥 Send me any file, video, photo, or audio and I’ll give you its full info.\n"
-        "📤 Or send me a file_id or file_unique_id and I’ll return the file to you!"
+        "👋 Welcome to the File Info & Fetch Bot!\n\n"
+        "📤 Send me any media (videos, documents, photos, audio), and I'll give you all the details.\n"
+        "📥 Send me a file_id or file_unique_id, and I'll return the original file if I can."
     )
 
-# Handle received media
+# Handle media files
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    file_info = None
-    label = "📦 Document"
+    message = update.message
+    file_info_text = ""
 
-    if msg.document:
-        f = msg.document
-        file_info = {
-            "file_id": f.file_id,
-            "file_unique_id": f.file_unique_id,
-            "file_name": f.file_name,
-            "file_size": f.file_size,
-            "mime_type": f.mime_type
-        }
+    if message.document:
+        doc = message.document
+        file_info_text = (
+            "📦 *Document*\n"
+            f"• file_id: `{doc.file_id}`\n"
+            f"• file_unique_id: `{doc.file_unique_id}`\n"
+            f"• file_name: {doc.file_name}\n"
+            f"• file_size: {doc.file_size} bytes\n"
+            f"• mime_type: {doc.mime_type}"
+        )
+    elif message.video:
+        vid = message.video
+        file_info_text = (
+            "🎬 *Video*\n"
+            f"• duration: {vid.duration} seconds\n"
+            f"• width: {vid.width}\n"
+            f"• height: {vid.height}\n"
+            f"• file_name: {vid.file_name or 'N/A'}\n"
+            f"• mime_type: {vid.mime_type}\n"
+            f"• file_id: `{vid.file_id}`\n"
+            f"• file_unique_id: `{vid.file_unique_id}`\n"
+            f"• file_size: {vid.file_size} bytes"
+        )
+    elif message.audio:
+        aud = message.audio
+        file_info_text = (
+            "🎵 *Audio*\n"
+            f"• duration: {aud.duration} seconds\n"
+            f"• performer: {aud.performer or 'N/A'}\n"
+            f"• title: {aud.title or 'N/A'}\n"
+            f"• mime_type: {aud.mime_type}\n"
+            f"• file_id: `{aud.file_id}`\n"
+            f"• file_unique_id: `{aud.file_unique_id}`\n"
+            f"• file_size: {aud.file_size} bytes"
+        )
+    elif message.photo:
+        photo = message.photo[-1]  # Highest resolution
+        file_info_text = (
+            "🖼️ *Photo*\n"
+            f"• file_id: `{photo.file_id}`\n"
+            f"• file_unique_id: `{photo.file_unique_id}`\n"
+            f"• width: {photo.width}\n"
+            f"• height: {photo.height}\n"
+            f"• file_size: {photo.file_size or 'N/A'} bytes"
+        )
+    else:
+        file_info_text = "⚠️ Unsupported file type."
 
-    elif msg.video:
-        f = msg.video
-        label = "🎞️ Video"
-        file_info = {
-            "file_id": f.file_id,
-            "file_unique_id": f.file_unique_id,
-            "file_name": f.file_name,
-            "file_size": f.file_size,
-            "mime_type": f.mime_type,
-            "width": f.width,
-            "height": f.height,
-            "duration": f"{f.duration // 60}:{f.duration % 60:02d}"
-        }
+    await message.reply_text(file_info_text, parse_mode='Markdown')
 
-        if f.thumb:
-            file_info.update({
-                "thumbnail": f.thumb.file_id,
-                "thumb_size": f.thumb.file_size,
-                "thumb_dimensions": f"{f.thumb.width}x{f.thumb.height}"
-            })
+# Handle messages that may be file IDs
+async def fetch_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
 
-    elif msg.audio:
-        f = msg.audio
-        label = "🎵 Audio"
-        file_info = {
-            "file_id": f.file_id,
-            "file_unique_id": f.file_unique_id,
-            "file_name": f.file_name,
-            "file_size": f.file_size,
-            "mime_type": f.mime_type,
-            "duration": f"{f.duration // 60}:{f.duration % 60:02d}"
-        }
-
-    elif msg.photo:
-        f = msg.photo[-1]
-        label = "🖼️ Photo"
-        file_info = {
-            "file_id": f.file_id,
-            "file_unique_id": f.file_unique_id,
-            "file_size": f.file_size,
-            "dimensions": f"{f.width}x{f.height}"
-        }
-
-    if file_info:
-        text = f"{label}\n"
-        for key, value in file_info.items():
-            text += f"• {key}: {value}\n"
-        await msg.reply_text(text)
-
-# Handle incoming text to fetch file by ID
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file_id = update.message.text.strip()
     try:
-        await update.message.reply_document(document=file_id)
+        file = await context.bot.get_file(text)
+        await file.download_to_drive(f"temp_file")
+        await update.message.reply_document(InputFile("temp_file"))
     except Exception as e:
-        await update.message.reply_text("⚠️ Could not send file. Please make sure the ID is correct or the bot has access to it.")
+        logger.error(e)
+        await update.message.reply_text("⚠️ Couldn't fetch the file. Make sure the file_id or file_unique_id is valid and known to the bot.")
 
-# Run the bot
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL | filters.PHOTO, handle_file))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-app.run_polling()
+# Main setup
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.video | filters.audio | filters.photo, handle_file))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_by_id))
+
+    print("Bot is running...")
+    app.run_polling()
