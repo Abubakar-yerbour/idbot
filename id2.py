@@ -1,110 +1,103 @@
 import logging
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     filters,
     ContextTypes,
-    CommandHandler
+    CommandHandler,
 )
-from telegram.helpers import escape_markdown
 
-# Set your bot token directly
+# Bot token
 TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Logging
+logging.basicConfig(level=logging.INFO)
 
 # /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = (
-        "Send me any file (PDF, ZIP, video, etc.) and I’ll give you the `file_id`, `file_unique_id`, "
-        "`size`, `name`, `dimensions`, and `duration` (if available)."
+    await update.message.reply_text(
+        "👋 Welcome to the Media Info Bot!\n\n"
+        "📥 Send me any file, video, photo, or audio and I’ll give you its full info.\n"
+        "📤 Or send me a file_id or file_unique_id and I’ll return the file to you!"
     )
-    await update.message.reply_text(message)
 
-# Handle incoming media files
+# Handle received media
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
+    msg = update.message
     file_info = None
+    label = "📦 Document"
 
-    if message.document:
-        doc = message.document
+    if msg.document:
+        f = msg.document
         file_info = {
-            "type": "Document",
-            "file_id": doc.file_id,
-            "file_unique_id": doc.file_unique_id,
-            "file_name": doc.file_name,
-            "file_size": doc.file_size,
-            "mime_type": doc.mime_type
+            "file_id": f.file_id,
+            "file_unique_id": f.file_unique_id,
+            "file_name": f.file_name,
+            "file_size": f.file_size,
+            "mime_type": f.mime_type
         }
 
-    elif message.video:
-        vid = message.video
+    elif msg.video:
+        f = msg.video
+        label = "🎞️ Video"
         file_info = {
-            "type": "Video",
-            "file_id": vid.file_id,
-            "file_unique_id": vid.file_unique_id,
-            "file_name": vid.file_name,
-            "file_size": vid.file_size,
-            "mime_type": vid.mime_type,
-            "width": vid.width,
-            "height": vid.height,
-            "duration": vid.duration,
-            "thumbnail": vid.thumb.file_id if vid.thumb else None,
-            "thumb_size": vid.thumb.file_size if vid.thumb else None,
-            "thumb_dimensions": (vid.thumb.width, vid.thumb.height) if vid.thumb else None
+            "file_id": f.file_id,
+            "file_unique_id": f.file_unique_id,
+            "file_name": f.file_name,
+            "file_size": f.file_size,
+            "mime_type": f.mime_type,
+            "width": f.width,
+            "height": f.height,
+            "duration": f"{f.duration // 60}:{f.duration % 60:02d}"
         }
 
-    elif message.audio:
-        aud = message.audio
+        if f.thumb:
+            file_info.update({
+                "thumbnail": f.thumb.file_id,
+                "thumb_size": f.thumb.file_size,
+                "thumb_dimensions": f"{f.thumb.width}x{f.thumb.height}"
+            })
+
+    elif msg.audio:
+        f = msg.audio
+        label = "🎵 Audio"
         file_info = {
-            "type": "Audio",
-            "file_id": aud.file_id,
-            "file_unique_id": aud.file_unique_id,
-            "file_name": aud.file_name,
-            "file_size": aud.file_size,
-            "mime_type": aud.mime_type,
-            "duration": aud.duration
+            "file_id": f.file_id,
+            "file_unique_id": f.file_unique_id,
+            "file_name": f.file_name,
+            "file_size": f.file_size,
+            "mime_type": f.mime_type,
+            "duration": f"{f.duration // 60}:{f.duration % 60:02d}"
         }
 
-    elif message.photo:
-        photo = message.photo[-1]
+    elif msg.photo:
+        f = msg.photo[-1]
+        label = "🖼️ Photo"
         file_info = {
-            "type": "Photo",
-            "file_id": photo.file_id,
-            "file_unique_id": photo.file_unique_id,
-            "file_size": photo.file_size,
-            "width": photo.width,
-            "height": photo.height
-        }
-
-    elif message.voice:
-        voice = message.voice
-        file_info = {
-            "type": "Voice",
-            "file_id": voice.file_id,
-            "file_unique_id": voice.file_unique_id,
-            "file_size": voice.file_size,
-            "duration": voice.duration
+            "file_id": f.file_id,
+            "file_unique_id": f.file_unique_id,
+            "file_size": f.file_size,
+            "dimensions": f"{f.width}x{f.height}"
         }
 
     if file_info:
-        text = f"📦 *{file_info['type']}*\n"
+        text = f"{label}\n"
         for key, value in file_info.items():
-            if key != "type" and value is not None:
-                text += f"• `{key}`: `{value}`\n"
-        await message.reply_text(text, parse_mode="Markdown")
+            text += f"• {key}: {value}\n"
+        await msg.reply_text(text)
 
-# Main function
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_file))
-    app.run_polling()
+# Handle incoming text to fetch file by ID
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = update.message.text.strip()
+    try:
+        await update.message.reply_document(document=file_id)
+    except Exception as e:
+        await update.message.reply_text("⚠️ Could not send file. Please make sure the ID is correct or the bot has access to it.")
 
-if __name__ == '__main__':
-    main()
+# Run the bot
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL | filters.PHOTO, handle_file))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+app.run_polling()
