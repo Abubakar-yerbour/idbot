@@ -1,101 +1,96 @@
-from telegram import Update, InputFile
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, CommandHandler, ContextTypes
-import logging
-import os
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Your bot token
 TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
 
-# Enable logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# In-memory storage for file info
+files_db = {}
 
-# /start command with emojis
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *Welcome!*\n\n"
-        "📤 Send me any media (video, document, photo, or audio), and I’ll give you detailed file info.\n"
-        "📥 Or send a `file_id` or `file_unique_id`, and I’ll send the file back if I can!",
+        "👋 Welcome to *File ID Bot*!\n\n"
+        "📤 Send me any media (document, video, audio, photo), and I'll give you detailed info about it.\n\n"
+        "📥 Or send me a file_id, unique_id, or message_id to retrieve the file.\n\n"
+        "Let's get started!",
         parse_mode="Markdown"
     )
 
-# Handle incoming media and show info
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    file_info_text = ""
+    file_info = None
+    file_type = None
 
     if message.document:
-        doc = message.document
-        file_info_text = (
-            "📦 *Document*\n"
-            f"• file_id: `{doc.file_id}`\n"
-            f"• file_unique_id: `{doc.file_unique_id}`\n"
-            f"• file_name: {doc.file_name}\n"
-            f"• file_size: {doc.file_size} bytes\n"
-            f"• mime_type: {doc.mime_type}"
-        )
+        file_info = message.document
+        file_type = "📦 *Document*"
     elif message.video:
-        vid = message.video
-        file_info_text = (
-            "🎬 *Video*\n"
-            f"• duration: {vid.duration} seconds\n"
-            f"• width: {vid.width}, height: {vid.height}\n"
-            f"• mime_type: {vid.mime_type}\n"
-            f"• file_id: `{vid.file_id}`\n"
-            f"• file_unique_id: `{vid.file_unique_id}`\n"
-            f"• file_size: {vid.file_size} bytes"
-        )
+        file_info = message.video
+        file_type = "🎞 *Video*"
     elif message.audio:
-        aud = message.audio
-        file_info_text = (
-            "🎵 *Audio*\n"
-            f"• duration: {aud.duration} seconds\n"
-            f"• performer: {aud.performer or 'N/A'}\n"
-            f"• title: {aud.title or 'N/A'}\n"
-            f"• mime_type: {aud.mime_type}\n"
-            f"• file_id: `{aud.file_id}`\n"
-            f"• file_unique_id: `{aud.file_unique_id}`\n"
-            f"• file_size: {aud.file_size} bytes"
-        )
+        file_info = message.audio
+        file_type = "🎵 *Audio*"
     elif message.photo:
-        photo = message.photo[-1]  # Highest quality
-        file_info_text = (
-            "🖼️ *Photo*\n"
-            f"• file_id: `{photo.file_id}`\n"
-            f"• file_unique_id: `{photo.file_unique_id}`\n"
-            f"• width: {photo.width}, height: {photo.height}\n"
-            f"• file_size: {photo.file_size or 'N/A'} bytes"
-        )
+        file_info = message.photo[-1]
+        file_type = "🖼 *Photo*"
     else:
-        file_info_text = "⚠️ Unsupported file type."
+        return
 
-    await message.reply_text(file_info_text, parse_mode="Markdown")
+    file_id = file_info.file_id
+    unique_id = file_info.file_unique_id
+    file_size = file_info.file_size
+    file_name = getattr(file_info, 'file_name', 'N/A')
+    mime_type = getattr(file_info, 'mime_type', 'N/A')
 
-# Handle file_id or file_unique_id
-async def fetch_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    files_db[file_id] = file_info
+    files_db[unique_id] = file_info
+    files_db[str(message.message_id)] = file_info
 
-    try:
-        telegram_file = await context.bot.get_file(text)
-        await telegram_file.download_to_drive("tempfile")
-        await update.message.reply_document(InputFile("tempfile"))
-        os.remove("tempfile")
-    except Exception as e:
-        logger.error(f"Error fetching file: {e}")
-        await update.message.reply_text(
-            "❌ Couldn't retrieve the file.\nMake sure the file ID is valid and the bot has seen this file before."
+    forward_info = ""
+    if message.forward_from:
+        forward_info = (
+            f"\n👤 *Forwarded from User:*\n"
+            f"• Name: `{message.forward_from.full_name}`\n"
+            f"• Username: @{message.forward_from.username}\n"
+            f"• User ID: `{message.forward_from.id}`"
         )
+    elif message.forward_from_chat:
+        forward_info = (
+            f"\n📢 *Forwarded from Channel:*\n"
+            f"• Title: `{message.forward_from_chat.title}`\n"
+            f"• Chat ID: `{message.forward_from_chat.id}`"
+        )
+    elif message.forward_sender_name:
+        forward_info = f"\n👤 *Forwarded from:* `{message.forward_sender_name}`"
 
-# Start the bot
-if __name__ == "__main__":
+    response = (
+        f"{file_type}\n"
+        f"• file_id: `{file_id}`\n"
+        f"• file_unique_id: `{unique_id}`\n"
+        f"• file_name: `{file_name}`\n"
+        f"• file_size: `{file_size}` bytes\n"
+        f"• mime_type: `{mime_type}`\n"
+        f"• message_id: `{message.message_id}`"
+        f"{forward_info}"
+    )
+
+    await message.reply_text(response, parse_mode="Markdown")
+
+async def retrieve_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    file_info = files_db.get(text)
+    if file_info:
+        try:
+            await update.message.reply_document(document=file_info.file_id)
+        except:
+            await update.message.reply_text("❌ Couldn't send the file. It may no longer be available.")
+    else:
+        await update.message.reply_text("❌ Couldn't retrieve the file.\nMake sure the file ID is valid and the bot has seen this file before.")
+
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(
-        filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO,
-        handle_file
-    ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_by_id))
-
-    print("Bot is running...")
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), retrieve_file))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL | filters.PHOTO, handle_file))
     app.run_polling()
+
+main()
