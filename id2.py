@@ -1,122 +1,138 @@
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, MessageHandler, filters,
-    ContextTypes, CommandHandler
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
 )
-from telegram.helpers import escape_markdown
 import logging
 
+# Bot token
 TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
 
+# File storage
 file_ids = {}
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+# Logging
+logging.basicConfig(level=logging.INFO)
 
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = (
         "👋 *Welcome!*\n\n"
-        "📤 *Send me any file (video, document, image, audio, etc.) and I’ll give you full details including:*"
-        "\n• File ID\n• Unique File ID\n• File Name\n• Size\n• Dimensions/Duration (if available)"
-        "\n\n🗂 *Send me a File ID or Unique File ID and I’ll return the file to you!*"
-        "\n\n🧙‍♂️ Group: *Created by Unknown Gods*"
+        "Send me *any file* (video, image, document, etc.), and I’ll reply with its details and ID.\n"
+        "You can also *send me a file ID, unique ID, or name* and I’ll return the file.\n\n"
+        "Need help? Contact @Cyb37h4ck37"
     )
-    await update.message.reply_text(escape_markdown(message, version=2), parse_mode="MarkdownV2")
+    await update.message.reply_text(message, parse_mode="Markdown")
 
-
+# Handle all incoming files
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     file = None
-    kind = "Unknown"
+    file_type = None
 
     if message.document:
         file = message.document
-        kind = "Document"
+        file_type = "Document"
     elif message.video:
         file = message.video
-        kind = "Video"
+        file_type = "Video"
     elif message.audio:
         file = message.audio
-        kind = "Audio"
+        file_type = "Audio"
     elif message.photo:
-        file = message.photo[-1]  # highest resolution
-        kind = "Photo"
-    else:
+        file = message.photo[-1]  # best quality
+        file_type = "Photo"
+    elif message.voice:
+        file = message.voice
+        file_type = "Voice"
+
+    if not file:
         await message.reply_text("Unsupported file type.")
         return
 
-    file_ids[file.file_id] = file.file_id
-    file_ids[file.unique_id] = file.file_id
+    file_id = file.file_id
+    unique_id = file.file_unique_id
+    file_name = getattr(file, "file_name", None) or f"{file_type}_{unique_id}"
+    file_size = file.file_size
+    duration = getattr(file, "duration", None)
+    width = getattr(file, "width", None)
+    height = getattr(file, "height", None)
 
-    forwarded_info = ""
+    file_ids[file_id] = file_id
+    file_ids[unique_id] = file_id
+    file_ids[file_name] = file_id
+
+    original_sender = ""
     if message.forward_from:
-        forwarded_info = (
-            f"\n\n👤 *Forwarded From:* `{escape_markdown(message.forward_from.full_name, 2)}`"
-            f"\n🆔 *User ID:* `{message.forward_from.id}`"
-        )
-    elif message.forward_sender_name:
-        forwarded_info = f"\n\n👤 *Forwarded From:* `{escape_markdown(message.forward_sender_name, 2)}`"
+        sender = message.forward_from
+        original_sender = f"\nForwarded From User: {sender.full_name} (ID: {sender.id})"
+    elif message.forward_from_chat:
+        chat = message.forward_from_chat
+        original_sender = f"\nForwarded From Channel: {chat.title or chat.username} (ID: {chat.id})"
 
     details = (
-        f"*{kind} Received*\n"
-        f"📄 *File Name:* `{escape_markdown(getattr(file, 'file_name', 'N/A'), 2)}`\n"
-        f"🆔 *File ID:* `{file.file_id}`\n"
-        f"🔐 *Unique File ID:* `{file.unique_id}`\n"
-        f"📦 *Size:* `{file.file_size} bytes`"
+        f"*{file_type} received!*\n\n"
+        f"*File Name:* `{file_name}`\n"
+        f"*File ID:* `{file_id}`\n"
+        f"*Unique ID:* `{unique_id}`\n"
+        f"*Size:* {file_size} bytes\n"
     )
+    if duration:
+        details += f"*Duration:* {duration}s\n"
+    if width and height:
+        details += f"*Dimensions:* {width}x{height}\n"
+    details += original_sender
 
-    if kind == "Video":
-        details += f"\n⏱ *Duration:* `{file.duration}s`"
-        details += f"\n📏 *Dimensions:* `{file.width}x{file.height}`"
-    elif kind == "Audio":
-        details += f"\n⏱ *Duration:* `{file.duration}s`"
-    elif kind == "Photo":
-        details += f"\n📏 *Dimensions:* `{file.width}x{file.height}`"
+    await message.reply_text(details, parse_mode="Markdown")
 
-    details += forwarded_info
-
-    await message.reply_text(details, parse_mode="MarkdownV2")
-
-
+# Handle file requests by ID/name
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    text = update.message.text.strip().replace("\\_", "_")
     file_id = file_ids.get(text, text)
 
     try:
         await update.message.reply_document(file_id)
-    except Exception:
-        try:
-            await update.message.reply_video(file_id)
-        except Exception:
-            try:
-                await update.message.reply_photo(file_id)
-            except Exception:
-                try:
-                    await update.message.reply_audio(file_id)
-                except Exception:
-                    await update.message.reply_text(
-                        "❌ I couldn’t find or access that file.\n"
-                        "Make sure the file ID is correct and the file still exists on Telegram."
-                    )
+        return
+    except:
+        pass
+    try:
+        await update.message.reply_video(file_id)
+        return
+    except:
+        pass
+    try:
+        await update.message.reply_audio(file_id)
+        return
+    except:
+        pass
+    try:
+        await update.message.reply_photo(file_id)
+        return
+    except:
+        pass
+    try:
+        await update.message.reply_voice(file_id)
+        return
+    except:
+        pass
 
+    await update.message.reply_text("❌ Couldn’t find or access that file.")
 
+# Error logging
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error("Exception while handling an update:", exc_info=context.error)
+    logging.error("Error occurred:", exc_info=context.error)
 
-
-def main():
+# Run bot
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(
-        filters.Document.ALL | filters.video | filters.audio | filters.photo,
+        filters.document | filters.video | filters.audio | filters.photo | filters.voice,
         handle_file
     ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
+
+    print("Bot is running...")
     app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
