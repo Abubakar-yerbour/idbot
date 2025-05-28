@@ -23,6 +23,20 @@ commands, results, shell_sessions = {}, {}, {}
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 def now(): return datetime.datetime.utcnow().isoformat()
 def allowed(f): return '.' in f and f.rsplit('.', 1)[1].lower() in {'jpg','png','mp4','mp3','txt','zip','wav','json','apk'}
+@app.route('/login', methods=['POST'])
+def login():
+    d = request.json
+    provided_password = d.get("password")
+
+    for username, info in users.items():
+        if info["password"] == provided_password:
+            return jsonify({
+                "token": username,
+                "role": "admin" if username == "admin" else "user",
+                "default": username == "default_user"
+            })
+
+    return jsonify({"error": "unauthorized"}), 403
 
 # === Device Registration ===
 @app.route('/register_device', methods=['POST'])
